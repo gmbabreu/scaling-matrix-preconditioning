@@ -1,4 +1,4 @@
-pip install -U "jax[cuda12]"
+pip install -U "jax[cuda12]==0.6.2"
 pip install wandb hydra-core flax==0.10.7 optax==0.2.6 tqdm datasets
 pip install jupyterlab ipywidgets
 pip install matplotlib
