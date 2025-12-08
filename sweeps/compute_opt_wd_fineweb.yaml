@@ -1,0 +1,101 @@
+program: main.py
+method: grid
+name: data_scaling_open
+
+metric: {name: eval_loss, goal: minimize}
+
+command:
+  - ${env}
+  - python
+  - main.py
+  - -cn
+  - fineweb
+  - wandb_mode=online
+  - wandb_tag=compute_opt_wd_fineweb_final
+  - wandb_project=picodo
+  - ${args_no_hyphens}
+
+parameters:
+
+  "model.mlp_expansion":
+    values: [1]
+
+  "model.base_D":
+    values: [256]
+
+  "model.N":
+    values: [6, 12, 24, 48]
+
+  "model.D":
+    values: [1024]
+    # values: [2560, 3072] # 2560
+
+  "model.swiglu":
+    values: [false]
+
+  "model.rope":
+    values: [false]
+  
+  "opt.mup":
+    values: [true]
+
+  "opt.eps":
+    values: [1e-8]
+
+  "opt.matrx_eps":
+    values: [1e-5]
+
+  "opt.b1":
+    value: 0.9
+
+  "opt.b2":
+    value: 0.98
+
+  "opt.lr":
+    values: [1]
+
+  "opt.wdxD":
+    values: [-7, -6, -5, -4, -3, -2, -1, 1]
+    # values: [1]
+
+  "opt.schedule":
+    values: [linear]
+
+  "opt.name":
+    values: [
+      # 'adam|lr:-6',
+      # 'grafted_shampoo2_adam|lr:-5',
+      # 'soap_noalign_atan2|lr:-4|matrix_eps:1e-10|rel_eps:false', # rel_eps refers for adam eps scaling, matrix_eps is absolute
+
+
+      'muon_adam|lr:-5',
+      'grafted_shampoo2_adam|lr:-4|block_size:512',
+      'soap|lr:-4|matrix_eps:1e-10|rel_eps:false|eigh:true|block_size:512',
+    ]
+
+  "opt.freq":
+    values: [10]
+
+  "opt.max_precond_dim":
+    values: [10000]
+
+  "opt.block_size":
+    values: [10000]
+
+  "opt.rel_eps":
+    values: [true]
+
+  "opt.eigh_warmup_steps":
+    value: 50
+
+  "token_per_param":
+    value: 20
+
+  "opt.warmup_tokens":
+    value: 100000000             # 100 M
+
+  "num_evals":
+    value: 300
+
+  "track_update_size":
+    value: true

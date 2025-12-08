@@ -1,0 +1,103 @@
+program: main.py
+method: grid
+name: data_scaling_open
+
+metric: {name: eval_loss, goal: minimize}
+
+command:
+  - ${env}
+  - python
+  - main.py
+  - -cn
+  - fineweb
+  - wandb_mode=online
+  - wandb_tag=compute_opt_fineweb_final
+  - wandb_project=picodo
+  - ${args_no_hyphens}
+
+parameters:
+
+  "model.mlp_expansion":
+    values: [1]
+
+  "model.base_D":
+    values: [256]
+
+  "model.N":
+    values: [3]
+
+  "model.D":
+    values: [256, 384, 512, 768, 1024, 1536, 2048, 2560]
+
+  "model.swiglu":
+    values: [false]
+
+  "model.rope":
+    values: [false]
+  
+  "opt.mup":
+    values: [true]
+
+  "opt.eps":
+    values: [1e-8]
+
+  "opt.matrx_eps":
+    values: [1e-5]
+
+  "opt.b1":
+    value: 0.9
+
+  "opt.b2":
+    value: 0.98
+
+  "opt.lr":
+    values: [0.0625, 0.125, 0.25, 0.5, 1, 2, 4, 8, 16]
+
+  "opt.schedule":
+    values: [linear]
+
+  "opt.name":
+    values: [
+      # SP
+      'muon_adam|lr:-5|mup:false',
+      'grafted_shampoo2_adam|lr:-5|block_size:512|mup:false',
+      'soap|lr:-4|matrix_eps:1e-10|rel_eps:false|eigh:true|block_size:512|mup:false',
+
+
+      # µP
+      'muon_adam|lr:-5|mup:true',
+      'grafted_shampoo2_adam|lr:-5|block_size:512|mup:true',
+      'soap|lr:-4|matrix_eps:1e-10|rel_eps:false|eigh:true|block_size:512|mup:true',
+
+      # Norm
+      'spectral-shampoo2_adam|lr:-2|block_size:512',
+      'spectral-soap|lr:-3|matrix_eps:1e-10|rel_eps:false|eigh:true|block_size:512',
+      'spectral-muon_adam|lr:-2',
+    ]
+
+  "opt.freq":
+    values: [10]
+
+  "opt.max_precond_dim":
+    values: [10000]
+
+  "opt.block_size":
+    values: [10000]
+
+  "opt.rel_eps":
+    values: [true]
+
+  "opt.eigh_warmup_steps":
+    value: 50
+
+  "token_per_param":
+    value: 20
+
+  "opt.warmup_tokens":
+    value: 100000000             # 100 M
+
+  "num_evals":
+    value: 300
+
+  "track_update_size":
+    value: true

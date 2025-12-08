@@ -1,0 +1,100 @@
+program: main.py
+method: grid
+name: data_scaling_open
+
+metric: {name: eval_loss, goal: minimize}
+
+command:
+  - ${env}
+  - python
+  - main.py
+  - -cn
+  - open
+  - wandb_mode=online
+  - wandb_tag=mup_lr_open_final
+  - wandb_project=picodo
+  - ${args_no_hyphens}
+
+parameters:
+
+  "model.mlp_expansion":
+    values: [1]
+
+  "model.base_D":
+    values: [128]
+
+  "model.N":
+    values: [3]
+
+  "model.D":
+    values: [128, 256, 512, 1024, 2048, 4096]
+
+  "model.swiglu":
+    values: [false]
+
+  "model.rope":
+    values: [false]
+  
+  "opt.mup":
+    values: [true, false]
+
+  "opt.eps":
+    values: [1e-8]
+
+  "opt.matrx_eps":
+    values: [1e-5]
+
+  "opt.freq":
+    values: [1]
+
+  "opt.b1":
+    value: 0.9
+
+  "opt.b2":
+    value: 0.95
+
+  "opt.lr":
+    values: [0.0625, 0.125, 0.25, 0.3535533905932738, 0.5, 0.7071067811865476, 1, 1.4142135623730951, 2, 2.8284271247461903, 4, 8, 16]
+
+  "opt.schedule":
+    values: [linear]
+  
+  "opt.readout_lr_mult":
+    value: 1
+
+  "opt.name":
+    values: [
+      'adamuon|lr:2.5e-3',
+      'adamuon_rms_align|lr:2e-2',
+      'shampoo|lr:1e-1',
+      'grafted_shampoo|lr:1e-2',
+      'grafted_shampoo2|lr:2e-2',
+      'soap|lr:1e-2|matrix_eps:1e-10|rel_eps:false|eigh:true', # rel_eps refers for adam eps scaling, matrix_eps is absolute
+      'muon|lr:4e-2',
+      'muon_adam|lr:4e-2',
+
+      'shampoo|lr:1e-1|block_size:128',
+      'grafted_shampoo|lr:1e-2|block_size:128',
+      'grafted_shampoo2|lr:2e-2|block_size:128',
+      'soap|lr:1e-2|matrix_eps:1e-10|rel_eps:false|eigh:true|block_size:128', # rel_eps refers for adam eps scaling, matrix_eps is absolute
+
+      'spectral-shampoo|lr:0.08',
+      'spectral-shampoo2|lr:0.32',
+      'spectral-soap_adamr|lr:2e-1|matrix_eps:1e-10|rel_eps:false|eigh:true',
+      "spectral-adamuon|lr:1e-1",
+    ]
+
+  "opt.rel_eps":
+    values: [true]
+
+  "opt.warmup_tokens":
+    value: 10000000             # 10 M
+
+  "T":
+    value: 100000000           # 100 M
+
+  "num_evals":
+    value: 300
+
+  "track_update_size":
+    value: true
