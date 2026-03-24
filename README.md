@@ -75,3 +75,37 @@ Yes — for medium-size experiments. The approach is usually practical when:
 - and you can afford `k` GN HVPs per update (vectorized via `vmap`).
 
 It is less practical for very large models unless you keep `k` small, refresh the subspace infrequently, or apply it only to selected layers.
+
+### How do I use it?
+Yes — it is already saved in this repository (see `experiments/subspace_gn.py`, `train.py`, and `sweeps/subspace_open.yaml`).
+
+Run a single training job with pure subspace GN:
+```bash
+python main.py -cn open \
+  opt.name=subspace_gn \
+  opt.subspace_k=64 \
+  opt.subspace_damping=1e-3 \
+  opt.subspace_lr_mult=1.0
+```
+
+Run a single training job with hybrid subspace GN + Adam complement:
+```bash
+python main.py -cn open \
+  opt.name=hybrid_subspace_gn \
+  opt.subspace_k=64 \
+  opt.subspace_damping=1e-3 \
+  opt.subspace_lr_mult=1.0
+```
+
+Launch the provided sweep:
+```bash
+wandb sweep --project matrix-precond sweeps/subspace_open.yaml
+wandb agent <USERNAME>/matrix-precond/<SWEEP_ID>
+```
+
+If you also want to save your local changes to your own remote fork/repo:
+```bash
+git add experiments/subspace_gn.py train.py configs/default.yaml sweeps/subspace_open.yaml README.md
+git commit -m "Add and document random-subspace GN training modes"
+git push
+```
