@@ -80,3 +80,6 @@ opt:
   readout_norm: 'spec'
   preconditioner_lr: 0.2
   kron_max_rms: 1.1
+  subspace_k: 64
+  subspace_damping: 1e-3
+  subspace_lr_mult: 1.0

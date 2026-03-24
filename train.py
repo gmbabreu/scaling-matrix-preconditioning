@@ -18,6 +18,7 @@ import pickle
 from math import prod
 from functools import partial
 from optax_optim import scale_by_shampoo, scale_by_muon, scale_by_adamuon, scale_by_adam, scale_by_momentum, scale_by_soap
+from experiments import subspace_gn
 import soap_debug_recorder as sdr
 import orbax.checkpoint as ocp
 from utils import get_vm_region, bucket_exists, get_flop_per_token, device_hardware_flops, clean_gcs_path, update_metrics_tree, clean_param_path
@@ -66,6 +67,9 @@ def train_and_evaluate(cfg: DictConfig):
 
   # Process optimizer-specific overrides via "|" in opt.name (delegated)
   cfg.opt.name = utils.parse_opt_name_overrides(cfg)
+  use_subspace_gn = cfg.opt.name in {"subspace_gn", "hybrid_subspace_gn"}
+  use_hybrid_subspace = cfg.opt.name == "hybrid_subspace_gn"
+  effective_opt_name = "adam" if use_subspace_gn else cfg.opt.name
 
   # model
   mesh = jax.make_mesh((jax.device_count(),), ('data',), axis_types=(jax.sharding.AxisType.Auto))
@@ -217,8 +221,9 @@ def train_and_evaluate(cfg: DictConfig):
   do_spectral_norm = cfg.opt.name.startswith('spectral-')
   if do_spectral_norm:
     cfg.opt.name = cfg.opt.name.replace('spectral-', '')
+    effective_opt_name = effective_opt_name.replace('spectral-', '')
   def assign_optimizer(p, path_str):
-      opt = cfg.opt.name
+      opt = effective_opt_name
       if opt.endswith('_adam'):
           opt = 'adam' if ('embed' in path_str or 'readout' in path_str) \
                         else opt.replace('_adam', '')
@@ -428,7 +433,7 @@ def train_and_evaluate(cfg: DictConfig):
       return nnx.value_and_grad(batch_loss_fn)(model, batch)
 
   @partial(jax.jit, donate_argnames=('opt_state'), static_argnames=('track_update',))
-  def train_step(opt_state, micro_batches, track_update: bool=False): #  micro_batches = list/tuple of length accum_steps   
+  def train_step(opt_state, micro_batches, step_idx, track_update: bool=False): #  micro_batches = list/tuple of length accum_steps   
     loss_sum, grads_sum = 0.0, None
     for batch in micro_batches:                    # python loop unrolled by jit, OK because accum_steps is small
         model = nnx.merge(model_graphdef, opt_state.model)
@@ -441,7 +446,43 @@ def train_and_evaluate(cfg: DictConfig):
 
     optimizer = nnx.merge(opt_graphdef, opt_state)
     old_params = opt_state.model if track_update else None
-    optimizer.update(grads_mean)
+    if use_subspace_gn:
+      # Subspace GN uses the first micro-batch for the curvature estimate to keep overhead bounded.
+      x_sub, _, _ = get_in_out(micro_batches[0])
+      params = opt_state.model
+      flat_params, unflatten_fn = subspace_gn.params_to_vec(params)
+      grad_flat, _ = subspace_gn.params_to_vec(grads_mean)
+      m_dim = flat_params.shape[0]
+      k_dim = min(cfg.opt.subspace_k, m_dim)
+      gn_key = jax.random.PRNGKey(cfg.seed + step_idx)
+      p_subspace = subspace_gn.random_subspace(gn_key, m_dim=m_dim, k_dim=k_dim)
+
+      def _forward_fn(p, x):
+          return nnx.merge(model_graphdef, p)(x).astype(jnp.float32)
+
+      delta_theta = subspace_gn.gn_subspace_direction(
+          params=params,
+          forward_fn=_forward_fn,
+          x=x_sub,
+          grad_flat=grad_flat,
+          p_subspace=p_subspace,
+          damping=cfg.opt.subspace_damping,
+          unflatten_fn=unflatten_fn,
+      )
+
+      if use_hybrid_subspace:
+        comp_grad_flat = grad_flat - p_subspace @ (p_subspace.T @ grad_flat)
+        optimizer.update(unflatten_fn(comp_grad_flat))
+      else:
+        optimizer.update(jax.tree.map(jnp.zeros_like, grads_mean))
+
+      # Apply the GN subspace update directly to model parameters.
+      model_state = nnx.state(optimizer.model)
+      delta_tree = unflatten_fn(delta_theta * (cfg.opt.lr * cfg.opt.subspace_lr_mult))
+      new_model_state = jax.tree.map(lambda p, d: p + d, model_state, delta_tree)
+      optimizer.model = nnx.merge(model_graphdef, new_model_state)
+    else:
+      optimizer.update(grads_mean)
     opt_state = nnx.state(optimizer)
     if track_update:
       last_update = jax.tree.map(lambda new, old: new - old, opt_state.model, old_params)
@@ -619,9 +660,9 @@ def train_and_evaluate(cfg: DictConfig):
       micro_batches = [jax.device_put(next(get_batch_train), data_sharding)
                       for _ in range(accum_steps)]
       if cfg.track_update_size:
-        opt_state, loss, last_update = train_step(opt_state, micro_batches, track_update=True)
+        opt_state, loss, last_update = train_step(opt_state, micro_batches, step, track_update=True)
       else:
-        opt_state, loss = train_step(opt_state, micro_batches, track_update=False)
+        opt_state, loss = train_step(opt_state, micro_batches, step, track_update=False)
       pbar.set_postfix_str(f'L={loss:.2f}')
 
       # Checkpointing

@@ -1,0 +1,56 @@
+program: main.py
+method: grid
+name: subspace_gn_open
+
+metric: {name: eval_loss, goal: minimize}
+
+command:
+  - ${env}
+  - python
+  - main.py
+  - -cn
+  - open
+  - wandb_mode=online
+  - wandb_tag=subspace_gn_open
+  - wandb_project=matrix-precond
+  - ${args_no_hyphens}
+
+parameters:
+  "model.N":
+    values: [3]
+
+  "model.D":
+    values: [256, 512, 1024]
+
+  "opt.name":
+    values: [
+      "subspace_gn",
+      "hybrid_subspace_gn"
+    ]
+
+  "opt.subspace_k":
+    values: [32, 64, 128]
+
+  "opt.subspace_damping":
+    values: [1e-4, 1e-3]
+
+  "opt.subspace_lr_mult":
+    values: [0.5, 1.0]
+
+  "opt.lr":
+    values: [0.125, 0.25, 0.5]
+
+  "opt.schedule":
+    values: [linear]
+
+  "opt.mup":
+    values: [false]
+
+  "opt.warmup_tokens":
+    value: 10000000
+
+  "T":
+    value: 100000000
+
+  "num_evals":
+    value: 300

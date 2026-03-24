@@ -29,6 +29,7 @@ The experiment configurations are defiend in `sweeps`:
 - `lr_open_depth.yaml`: Depth scaling on openwebtext (Figure 4) (note `opt.depth_mup` means scaling LR and residual output with depth, but with $\alpha=1$ rather than $\alpha=0.5$ in depth-$\mu\text{P}$)
 - `compute_opt_fineweb.yaml`: Compute-optimal width scaling with SP, $\mu\text{P}$, and spectral normalization (Figure 5 left)
 - `compute_opt_wd_fineweb.yaml`: Compute-optimal weight decay scaling (Figure 5 right)
+- `subspace_open.yaml`: Random-subspace GN and hybrid GN+Adam experiments on openwebtext
 
 To run an experiment, follow
 ```
@@ -56,3 +57,21 @@ Refer to the sweep definition for filtering runs based on hyperparameters (`opt/
 | Muon | 3.178 | [sweep](https://wandb.ai/zc2157/llama_proj/workspace?nw=iixe5a26l1) |
 | Shampoo | 3.178 | [sweep](https://wandb.ai/zc2157/llama_proj/workspace?nw=z5sgyyo637p) |
 | SOAP | 3.175 | [sweep](https://wandb.ai/zc2157/llama_proj/workspace?nw=7unbta5y48t) |
+
+## Experimental: Random-Subspace Gauss-Newton (GN)
+A reusable implementation of the random-subspace GN update and a GN+complement hybrid step is included in `experiments/subspace_gn.py`, and both are now wired into `train.py` via:
+- `opt.name=subspace_gn`
+- `opt.name=hybrid_subspace_gn`
+
+Additional config knobs:
+- `opt.subspace_k`
+- `opt.subspace_damping`
+- `opt.subspace_lr_mult`
+
+### Is this viable?
+Yes — for medium-size experiments. The approach is usually practical when:
+- `k << M` (subspace dimension much smaller than total parameters),
+- batches are moderate,
+- and you can afford `k` GN HVPs per update (vectorized via `vmap`).
+
+It is less practical for very large models unless you keep `k` small, refresh the subspace infrequently, or apply it only to selected layers.
