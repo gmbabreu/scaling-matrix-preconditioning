@@ -1,0 +1,62 @@
+program: main.py
+method: grid
+name: open_subspace_k_refresh_adam_baseline
+
+metric: {name: eval_loss, goal: minimize}
+
+command:
+  - ${env}
+  - python
+  - main.py
+  - -cn
+  - open
+  - wandb_mode=online
+  - wandb_tag=open_subspace_k_refresh_baseline
+  - wandb_project=picodo
+  - ${args_no_hyphens}
+
+parameters:
+  "model.base_D":
+    value: 128
+
+  "model.D":
+    value: 128
+
+  "model.N":
+    value: 3
+
+  "model.mlp_expansion":
+    value: 1
+
+  "model.swiglu":
+    value: false
+
+  "model.rope":
+    value: false
+
+  "opt.B":
+    value: 64
+
+  "opt.B_max":
+    value: 64
+
+  "T":
+    value: 25000000
+
+  "num_evals":
+    value: 40
+
+  "opt.schedule":
+    value: linear
+
+  "opt.warmup_tokens":
+    value: 1000000
+
+  "opt.rel_eps":
+    value: true
+
+  "opt.name":
+    value: adam
+
+  "opt.lr":
+    value: 0.1

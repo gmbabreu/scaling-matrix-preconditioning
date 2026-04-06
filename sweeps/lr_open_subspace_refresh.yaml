@@ -1,0 +1,71 @@
+program: main.py
+method: grid
+name: open_subspace_k_refresh_sweep
+
+metric: {name: eval_loss, goal: minimize}
+
+command:
+  - ${env}
+  - python
+  - main.py
+  - -cn
+  - open
+  - wandb_mode=online
+  - wandb_tag=open_subspace_k_refresh_sweep
+  - wandb_project=picodo
+  - ${args_no_hyphens}
+
+parameters:
+  "model.base_D":
+    value: 128
+
+  "model.D":
+    values: [128, 256]
+
+  "model.N":
+    value: 3
+
+  "model.mlp_expansion":
+    value: 1
+
+  "model.swiglu":
+    value: false
+
+  "model.rope":
+    value: false
+
+  "opt.B":
+    value: 64
+
+  "opt.B_max":
+    value: 64
+
+  "T":
+    value: 25000000
+
+  "num_evals":
+    value: 40
+
+  "opt.schedule":
+    value: linear
+
+  "opt.warmup_tokens":
+    value: 1000000
+
+  "opt.rel_eps":
+    value: true
+
+  "opt.name":
+    value: gn_subspace_adamw
+
+  "opt.lr":
+    values: [0.01, 0.1, 0.5, 1.0]
+
+  "opt.gn_subspace_dim":
+    values: [100, 200, 400]
+
+  "opt.gn_damping":
+    value: 0.001
+
+  "opt.gn_refresh_every":
+    values: [5, 10, 20, 40]
