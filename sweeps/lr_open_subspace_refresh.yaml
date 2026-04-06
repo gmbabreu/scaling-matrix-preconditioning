@@ -20,7 +20,7 @@ parameters:
     value: 128
 
   "model.D":
-    values: [128, 256]
+    values: [128]
 
   "model.N":
     value: 3
@@ -59,10 +59,10 @@ parameters:
     value: gn_subspace_adamw
 
   "opt.lr":
-    values: [0.01, 0.1, 0.5, 1.0]
+    values: [0.01, 0.1,1.0]
 
   "opt.gn_subspace_dim":
-    values: [100, 200, 400]
+    values: [100, 200, 300]
 
   "opt.gn_damping":
     value: 0.001
