@@ -23,6 +23,14 @@ import orbax.checkpoint as ocp
 from utils import get_vm_region, bucket_exists, get_flop_per_token, device_hardware_flops, clean_gcs_path, update_metrics_tree, clean_param_path
 import time
 
+def random_subspace(key, M: int, k: int, dtype, use_qr: bool = True):
+  """Sample a random Mxk subspace basis."""
+  A = jax.random.normal(key, (M, k), dtype=dtype)
+  if use_qr:
+    Q, _ = jnp.linalg.qr(A, mode='reduced')
+    return Q
+  return A / (jnp.linalg.norm(A, axis=0, keepdims=True) + 1e-8)
+
 @nnx.jit
 def eval_features(features, prev_features):
   delta = features - prev_features
@@ -225,6 +233,8 @@ def train_and_evaluate(cfg: DictConfig):
       elif opt.endswith('_adamr'):
           opt = 'adam' if 'readout' in path_str \
                         else opt.replace('_adamr', '')
+      elif opt == 'gn_subspace_adamw':
+          opt = 'adam'
       return opt
 
   optimizers = jax.tree.map(assign_optimizer, nnx.state(model), paths)
@@ -288,6 +298,8 @@ def train_and_evaluate(cfg: DictConfig):
         N = N_scale
 
       if opt_name in ['adam', 'adamuon', 'adamuon_rms_align', 'muon_adam']: 
+        mult = 1 / din
+      elif opt_name == 'gn_subspace_adamw':
         mult = 1 / din
       elif opt_name == 'muon': 
         mult = (dout / din) ** 0.5
@@ -353,8 +365,12 @@ def train_and_evaluate(cfg: DictConfig):
       'soap': lambda: scale_by_soap(b1=cfg.opt.b1, b2=cfg.opt.b2, adam_eps=cfg.opt.eps, matrix_eps=cfg.opt.matrx_eps, freq=cfg.opt.freq, scale_eps=cfg.opt.scale_eps, base_shapes=base_shapes, B=B_scale, N=N_scale, nb_in=nb_in_tree, nb_out=nb_out_tree, eigh=cfg.opt.eigh, eigh_warmup_steps=cfg.opt.eigh_warmup_steps, align=True, rel_eps=cfg.opt.rel_eps, block_size=cfg.opt.block_size, max_precond_dim=cfg.opt.max_precond_dim, bf16_momentum=cfg.bf16_momentum),
   }
 
+  use_gn_subspace_adamw = cfg.opt.name == 'gn_subspace_adamw'
+  if use_gn_subspace_adamw and accum_steps != 1:
+      raise ValueError("gn_subspace_adamw currently requires accum_steps == 1 (set opt.B_max to opt.B).")
+
   labels_in_use   = frozenset(jax.tree_util.tree_leaves(optimizers))
-  transforms_dict = {name: make() for name, make in factory.items() if name in labels_in_use}
+  transforms_dict = {name: make() for name, make in factory.items() if name in labels_in_use and name in factory}
 
   # single-label fast-path (skips optax.multi_transform completely)
   if len(labels_in_use) == 1:
@@ -400,15 +416,35 @@ def train_and_evaluate(cfg: DictConfig):
   if soap_save_path:
     sdr.init(flat_names, soap_save_path)
 
-  tx = optax.chain(
-      preconditioner,
-      optax.scale_by_schedule(schedule_fn),
-      optax.scale(-1.0)
-  )
+  if not use_gn_subspace_adamw:
+    tx = optax.chain(
+        preconditioner,
+        optax.scale_by_schedule(schedule_fn),
+        optax.scale(-1.0)
+    )
 
-  with mesh:
-    optimizer = nnx.Optimizer(model, tx)
-  opt_graphdef, opt_state = nnx.split(optimizer)
+    with mesh:
+      optimizer = nnx.Optimizer(model, tx)
+    opt_graphdef, opt_state = nnx.split(optimizer)
+  else:
+    opt_comp = optax.adamw(
+        learning_rate=1.0,
+        b1=cfg.opt.b1,
+        b2=cfg.opt.b2,
+        eps=cfg.opt.eps,
+        weight_decay=cfg.opt.weight_decay,
+    )
+    opt_state_comp = opt_comp.init(nnx.state(model))
+    params = nnx.state(model)
+    flat_params, _ = jax.flatten_util.ravel_pytree(params)
+    subspace_key, p_key = jax.random.split(jax.random.PRNGKey(cfg.seed))
+    gn_basis = random_subspace(
+        p_key,
+        flat_params.shape[0],
+        int(cfg.opt.gn_subspace_dim),
+        flat_params.dtype,
+        bool(cfg.opt.gn_use_qr),
+    )
 
 
   del base_shapes, shapes
@@ -448,6 +484,54 @@ def train_and_evaluate(cfg: DictConfig):
       return opt_state, loss, last_update
     else:
       return opt_state, loss
+
+  @nnx.jit
+  def train_step_gn_subspace(params, opt_state_comp, batch, basis, lr_t, damping):
+    x, y, weights = get_in_out(batch)
+
+    def _residual_and_loss(p):
+      model_local = nnx.merge(model_graphdef, p)
+      logits = model_local(x).astype(jnp.float32)
+      if cfg.ds_path == 'fourier':
+        residual = (logits - y).reshape(-1)
+        losses = loss_fn(logits, y).mean()
+        mean_loss = jnp.mean(losses)
+      else:
+        onehot = jax.nn.one_hot(y.astype(jnp.int32), logits.shape[-1])
+        probs = jax.nn.softmax(logits, axis=-1)
+        residual = ((probs - onehot) * weights[..., None]).reshape(-1)
+        losses = loss_fn(logits, y)
+        mean_loss = jnp.sum(losses * weights) / (weights.sum() + 1e-6)
+      return mean_loss, residual
+
+    (loss, residual), grad_tree = jax.value_and_grad(_residual_and_loss, has_aux=True)(params)
+    grad_vec, unravel = jax.flatten_util.ravel_pytree(grad_tree)
+    flat_params, _ = jax.flatten_util.ravel_pytree(params)
+    k = basis.shape[1]
+
+    def jvp_col(v_col):
+      v_tree = unravel(v_col)
+      _, out = jax.jvp(
+          lambda p: nnx.merge(model_graphdef, p)(x).astype(jnp.float32),
+          (params,),
+          (v_tree,),
+      )
+      return out.reshape(-1)
+
+    jp = jax.vmap(jvp_col, in_axes=1, out_axes=1)(basis)
+    bsz = x.shape[0]
+    h_red = jp.T @ jp / bsz + damping * jnp.eye(k, dtype=jp.dtype)
+    g_red = jp.T @ residual / bsz
+    delta_u = -jnp.linalg.solve(h_red, g_red)
+    delta_theta = basis @ delta_u
+
+    complement_grad = grad_vec - basis @ (basis.T @ grad_vec)
+    complement_grad_tree = unravel(complement_grad)
+    updates, opt_state_comp = opt_comp.update(complement_grad_tree, opt_state_comp, params)
+    adam_update_vec, _ = jax.flatten_util.ravel_pytree(updates)
+    new_flat = flat_params + lr_t * delta_theta + adam_update_vec
+    new_params = unravel(new_flat)
+    return new_params, opt_state_comp, loss
   
 
   def loss_and_grad_fn(param, batch):
@@ -479,6 +563,10 @@ def train_and_evaluate(cfg: DictConfig):
   eval_steps.add(num_train_steps-1)
 
   # Creates checkpoint manager
+  if use_gn_subspace_adamw and ckpt_path is not None:
+    print("Checkpointing is disabled for gn_subspace_adamw.")
+    ckpt_path = None
+
   if ckpt_path is not None:
     mngr = ocp.CheckpointManager(
         ckpt_path,
@@ -491,7 +579,7 @@ def train_and_evaluate(cfg: DictConfig):
   start_step = -1
 
   # Loading from checkpoint
-  if mngr is not None and mngr.latest_step() is not None:
+  if (not use_gn_subspace_adamw) and mngr is not None and mngr.latest_step() is not None:
     start_step = mngr.latest_step()
     print(f"Resume training from step {start_step}")
     # Filter abstract type to avoid explicit single device sharding
@@ -560,8 +648,9 @@ def train_and_evaluate(cfg: DictConfig):
           flops_per_sec = achieved_flops / elapsed_time
           mfu = flops_per_sec / theoretical_flops
 
-        wandb_eval_metrics = eval_step(opt_state.model, ds_valid)
-        merged_model = nnx.merge(model_graphdef, opt_state.model)
+        current_params = params if use_gn_subspace_adamw else opt_state.model
+        wandb_eval_metrics = eval_step(current_params, ds_valid)
+        merged_model = nnx.merge(model_graphdef, current_params)
         x_eval = get_in_out(ds_valid[0])[0]
         features, logits = merged_model.get_features_and_logits(x_eval)
         embeddings = merged_model.get_embedding(x_eval)
@@ -618,20 +707,39 @@ def train_and_evaluate(cfg: DictConfig):
       # training step
       micro_batches = [jax.device_put(next(get_batch_train), data_sharding)
                       for _ in range(accum_steps)]
-      if cfg.track_update_size:
+      if use_gn_subspace_adamw:
+        params, opt_state_comp, loss = train_step_gn_subspace(
+            params,
+            opt_state_comp,
+            micro_batches[0],
+            gn_basis,
+            lr_t,
+            cfg.opt.gn_damping,
+        )
+      elif cfg.track_update_size:
         opt_state, loss, last_update = train_step(opt_state, micro_batches, track_update=True)
       else:
         opt_state, loss = train_step(opt_state, micro_batches, track_update=False)
       pbar.set_postfix_str(f'L={loss:.2f}')
 
       # Checkpointing
-      if mngr is not None:
+      if (not use_gn_subspace_adamw) and mngr is not None:
         mngr.save(step, args=ocp.args.Composite(
             opt_state=ocp.args.StandardSave(opt_state),
             prev_features=ocp.args.ArraySave(prev_features),
             prev_logits=ocp.args.ArraySave(prev_logits),
             prev_embeddings=ocp.args.ArraySave(prev_embeddings),
         ))
+      elif use_gn_subspace_adamw and cfg.opt.gn_refresh_every > 0 and (step + 1) % cfg.opt.gn_refresh_every == 0:
+        subspace_key, p_key = jax.random.split(subspace_key)
+        flat_params, _ = jax.flatten_util.ravel_pytree(params)
+        gn_basis = random_subspace(
+            p_key,
+            flat_params.shape[0],
+            int(cfg.opt.gn_subspace_dim),
+            flat_params.dtype,
+            bool(cfg.opt.gn_use_qr),
+        )
 
       tau += lr_t
     # wandb.log(pending_train_metrics)

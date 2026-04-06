@@ -80,3 +80,7 @@ opt:
   readout_norm: 'spec'
   preconditioner_lr: 0.2
   kron_max_rms: 1.1
+  gn_subspace_dim: 50
+  gn_damping: 0
+  gn_use_qr: true
+  gn_refresh_every: 50
