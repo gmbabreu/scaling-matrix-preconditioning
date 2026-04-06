@@ -29,6 +29,7 @@ The experiment configurations are defiend in `sweeps`:
 - `lr_open_depth.yaml`: Depth scaling on openwebtext (Figure 4) (note `opt.depth_mup` means scaling LR and residual output with depth, but with $\alpha=1$ rather than $\alpha=0.5$ in depth-$\mu\text{P}$)
 - `compute_opt_fineweb.yaml`: Compute-optimal width scaling with SP, $\mu\text{P}$, and spectral normalization (Figure 5 left)
 - `compute_opt_wd_fineweb.yaml`: Compute-optimal weight decay scaling (Figure 5 right)
+- `lr_open_short.yaml`: Short openwebtext smoke-test sweep for optimizer prototyping (includes `gn_subspace_adamw`, with subspace refresh every 50 steps)
 
 To run an experiment, follow
 ```

@@ -1,0 +1,71 @@
+program: main.py
+method: grid
+name: open_short_optimizer_smoke
+
+metric: {name: eval_loss, goal: minimize}
+
+command:
+  - ${env}
+  - python
+  - main.py
+  - -cn
+  - open
+  - wandb_mode=online
+  - wandb_tag=open_short_optimizer_smoke
+  - wandb_project=picodo
+  - ${args_no_hyphens}
+
+parameters:
+  "model.base_D":
+    value: 128
+
+  "model.D":
+    values: [128, 256]
+
+  "model.N":
+    value: 3
+
+  "model.mlp_expansion":
+    value: 1
+
+  "model.swiglu":
+    value: false
+
+  "model.rope":
+    value: false
+
+  "opt.B":
+    value: 64
+
+  "opt.B_max":
+    value: 64
+
+  "T":
+    value: 25000000
+
+  "num_evals":
+    value: 40
+
+  "opt.schedule":
+    value: linear
+
+  "opt.warmup_tokens":
+    value: 1000000
+
+  "opt.rel_eps":
+    value: true
+
+  "opt.name":
+    values: ["adam", "gn_subspace_adamw"]
+
+  "opt.lr":
+    values: [0.25, 0.5]
+
+  "opt.gn_subspace_dim":
+    values: [20, 50, 100]
+
+  "opt.gn_damping":
+    value: 0
+
+  "opt.gn_refresh_every":
+    value: 50
